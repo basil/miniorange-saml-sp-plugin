@@ -6,7 +6,6 @@ import org.miniorange.saml.MoIDPMetadata;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Util;
 import hudson.util.Secret;
-import org.acegisecurity.Authentication;
 import hudson.Extension;
 import hudson.model.Descriptor;
 import hudson.model.User;
@@ -15,9 +14,11 @@ import hudson.security.SecurityRealm;
 import hudson.util.FormValidation;
 import jenkins.model.Jenkins;
 import jenkins.security.SecurityListener;
-import org.acegisecurity.*;
-import org.acegisecurity.context.SecurityContextHolder;
-import org.acegisecurity.userdetails.UserDetails;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang3.BooleanUtils;
 
@@ -29,7 +30,6 @@ import org.apache.commons.io.IOUtils;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletResponse;
-import javax.ws.rs.core.MediaType;
 
 import javax.servlet.http.HttpSession;
 import java.io.*;
@@ -45,7 +45,6 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.acegisecurity.BadCredentialsException;
 import hudson.tasks.Mailer;
 
 import org.opensaml.common.xml.SAMLConstants;
@@ -85,6 +84,7 @@ import org.apache.http.conn.HttpClientConnectionManager;
 import org.apache.http.impl.conn.SystemDefaultRoutePlanner;
 import java.net.ProxySelector;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 
 public class MoSAMLAddIdp extends SecurityRealm {
 
@@ -236,7 +236,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
     }
 
     @Override
-    public String getPostLogOutUrl(StaplerRequest req, Authentication auth) {
+    public String getPostLogOutUrl2(StaplerRequest req, Authentication auth) {
 
         return "/securityRealm/moLogin";
     }
@@ -291,12 +291,10 @@ public class MoSAMLAddIdp extends SecurityRealm {
                                 session.invalidate();
                             }
                             request.getSession(true);
-                            List<GrantedAuthority> authorities = new ArrayList<GrantedAuthority>();
-                            authorities.add(AUTHENTICATED_AUTHORITY);
-                            MoSAMLUserInfo userInfo = new MoSAMLUserInfo(username, authorities.toArray(new GrantedAuthority[authorities.size()]));
+                            MoSAMLUserInfo userInfo = new MoSAMLUserInfo(username, Collections.singleton(AUTHENTICATED_AUTHORITY2));
                             MoSAMLAuthenticationTokenInfo tokenInfo = new MoSAMLAuthenticationTokenInfo(userInfo);
                             SecurityContextHolder.getContext().setAuthentication(tokenInfo);
-                            SecurityListener.fireAuthenticated(userInfo);
+                            SecurityListener.fireAuthenticated2(userInfo);
                             SecurityListener.fireLoggedIn(user_jenkin.getId());
                             response.sendRedirect(redirectOnFinish);
                             return;
@@ -402,13 +400,13 @@ public class MoSAMLAddIdp extends SecurityRealm {
                 Boolean  isValidUser= details.isPasswordCorrect(password);
                 Jenkins j= Jenkins.getInstanceOrNull();
                 if (j!=null&& isValidUser)
-                    j.setSecurityRealm(new HudsonPrivateSecurityRealm(false));
+                    j.setSecurityRealm(new HudsonPrivateSecurityRealm(false, false, null));
                 JSONObject json = new JSONObject();
                 JSONObject success = new JSONObject();
                 success.put("Status", "SUCCESS");
                 success.put("Message", "Successfully disabled SSO");
                 json.put("Message", success);
-                response.setContentType(MediaType.APPLICATION_JSON);
+                response.setContentType("application/json");
                 response.setStatus(200);
                 response.getOutputStream().write(json.toString().getBytes(StandardCharsets.UTF_8));
                 response.getOutputStream().close();
@@ -431,7 +429,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
             error.put("Status", "ERROR");
             error.put("Message", errorMessage);
             json.put("error", error);
-            response.setContentType(MediaType.APPLICATION_JSON);
+            response.setContentType("application/json");
             response.setStatus(errorCode);
             response.getOutputStream().write(json.toString().getBytes(StandardCharsets.UTF_8));
             response.getOutputStream().close();
@@ -451,7 +449,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
                 response.setHeader("Content-Disposition", "attachment; filename=\"sp_metadata.xml\"");
                 response.setHeader("Cache-Control", "max-age=0");
                 response.setHeader("Pragma", "");
-                response.setContentType(MediaType.APPLICATION_XML);
+                response.setContentType("application/xml");
                 response.getOutputStream().write(metadata.getBytes(StandardCharsets.UTF_8));
             } catch (Exception e) {
                 LOGGER.fine("An error occurred while downloading the metadata." + e);
@@ -470,7 +468,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
             response.setHeader("Content-Disposition", "attachment; filename=\"sp-certificate.crt\"");
             response.setHeader("Cache-Control", "max-age=0");
             response.setHeader("Pragma", "");
-            response.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            response.setContentType("application/octet-stream");
             response.getOutputStream().write(certificate.getBytes(StandardCharsets.UTF_8));
 
         } catch (Exception e) {
@@ -649,7 +647,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
 
             if (response.getStatusLine().getStatusCode() == 200 && response.getEntity() != null) {
                 LOGGER.info("Response Entity found. Reading Response payload.");
-                String data = IOUtils.toString(new InputStreamReader((response.getEntity().getContent())));
+                String data = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
                 LOGGER.info("Response payload: " + data);
                 httpClient.close();
                 return data;
@@ -879,7 +877,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
             Map<String, String[]> responseSAMLAttributes = moSAMLResponse.getAttributes();
             for (String name: responseSAMLAttributes.keySet()){
                 String key = name.toString();
-                String value = responseSAMLAttributes.get(name).toString();
+                String value = Arrays.toString(responseSAMLAttributes.get(name));
                 System.out.println(key + " " + value);
             }
            /* for (String name: getSamlCustomAttributes.keySet()){
@@ -918,7 +916,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
 
     @Override
     public SecurityComponents createSecurityComponents() {
-        return new SecurityComponents(authentication -> {
+        return new SecurityComponents((AuthenticationManager) authentication -> {
             if (authentication instanceof MoSAMLAuthenticationTokenInfo) {
                 return authentication;
             }
@@ -968,19 +966,13 @@ public class MoSAMLAddIdp extends SecurityRealm {
             session.setAttribute("sessionIndex", MoSAMLUtils.generateRandomAlphaNumericKey(16));
             session.setAttribute("nameID", user.getId());
 
-            UserDetails details = user.getUserDetailsForImpersonation();
+            UserDetails details = user.getUserDetailsForImpersonation2();
             LOGGER.fine("UserDetails"+details);
 
-            GrantedAuthority[] authorities= details.getAuthorities();
-            List<GrantedAuthority>authorityList= new ArrayList<>();
-            for (GrantedAuthority authority : authorities) {
-
-                authorityList.add(authority);
-            }
-            MoSAMLUserInfo userInfo = new MoSAMLUserInfo(user.getId(), authorityList.toArray(new GrantedAuthority[authorityList.size()]));
+            MoSAMLUserInfo userInfo = new MoSAMLUserInfo(user.getId(), details.getAuthorities());
             MoSAMLAuthenticationTokenInfo tokenInfo = new MoSAMLAuthenticationTokenInfo(userInfo);
             SecurityContextHolder.getContext().setAuthentication(tokenInfo);
-            SecurityListener.fireAuthenticated(userInfo);
+            SecurityListener.fireAuthenticated2(userInfo);
             SecurityListener.fireLoggedIn(user.getId());
            return HttpResponses.redirectTo(redirectUrl);
 
@@ -1085,7 +1077,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
 
 
     public String getsPEntityID() {
-        String rootURL= Jenkins.getInstance().getRootUrl();
+        String rootURL= Jenkins.get().getRootUrl();
         if(rootURL.endsWith("/")){
             rootURL= rootURL.substring(0,rootURL.length()-1);
         }
@@ -1093,7 +1085,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
     }
 
     public String getAudienceURI() {
-        String rootURL= Jenkins.getInstance().getRootUrl();
+        String rootURL= Jenkins.get().getRootUrl();
         if(rootURL.endsWith("/")){
             rootURL= rootURL.substring(0,rootURL.length()-1);
         }
@@ -1101,7 +1093,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
     }
 
     public String getAcsURL() {
-        String rootURL= Jenkins.getInstance().getRootUrl();
+        String rootURL= Jenkins.get().getRootUrl();
         if(rootURL.endsWith("/")){
             rootURL= rootURL.substring(0,rootURL.length()-1);
         }
@@ -1109,14 +1101,14 @@ public class MoSAMLAddIdp extends SecurityRealm {
     }
 
     public String getSpLogoutURL() {
-        String rootURL= Jenkins.getInstance().getRootUrl();
+        String rootURL= Jenkins.get().getRootUrl();
         if(rootURL.endsWith("/")){
             rootURL= rootURL.substring(0,rootURL.length()-1);
         }
         return rootURL+"/securityRealm/logout";
     }
     public String getBackdoorURL() {
-        String rootURL= Jenkins.getInstance().getRootUrl();
+        String rootURL= Jenkins.get().getRootUrl();
         if(rootURL.endsWith("/")){
             rootURL= rootURL.substring(0,rootURL.length()-1);
         }
@@ -1359,7 +1351,7 @@ public class MoSAMLAddIdp extends SecurityRealm {
                                     MoSAMLAddIdp.DEFAULT_API_KEY));
                     LOGGER.fine("Send_feedback response: " + response1);
                     return FormValidation.ok("Message Sent. The miniOrange support will contact soon.");
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     return FormValidation.error("Error occurred while sending request.");
                 }
             }
